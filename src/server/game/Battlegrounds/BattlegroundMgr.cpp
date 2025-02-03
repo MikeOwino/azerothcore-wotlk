@@ -43,6 +43,7 @@
 #include "ObjectMgr.h"
 #include "Opcodes.h"
 #include "Player.h"
+#include "ScriptMgr.h"
 #include "SharedDefines.h"
 #include "World.h"
 #include "WorldPacket.h"
@@ -141,6 +142,7 @@ void BattlegroundMgr::Update(uint32 diff)
             BattlegroundTypeId bgTypeId = BattlegroundTypeId((scheduled[i] >> 8) & 255);
             BattlegroundBracketId bracket_id = BattlegroundBracketId(scheduled[i] & 255);
             m_BattlegroundQueues[bgQueueTypeId].BattlegroundQueueUpdate(diff, bgTypeId, bracket_id, arenaType, arenaMMRating > 0, arenaMMRating);
+            m_BattlegroundQueues[bgQueueTypeId].BattlegroundQueueAnnouncerUpdate(diff, bgQueueTypeId, bracket_id);
         }
     }
 
@@ -156,7 +158,15 @@ void BattlegroundMgr::Update(uint32 diff)
         {
             for (uint32 bracket = BG_BRACKET_ID_FIRST; bracket < MAX_BATTLEGROUND_BRACKETS; ++bracket)
             {
-                m_BattlegroundQueues[qtype].BattlegroundQueueUpdate(diff, BATTLEGROUND_AA, BattlegroundBracketId(bracket), BattlegroundMgr::BGArenaType(BattlegroundQueueTypeId(qtype)), true, 0);
+                m_BattlegroundQueues[qtype].BattlegroundQueueUpdate(m_NextPeriodicQueueUpdateTime, BATTLEGROUND_AA, BattlegroundBracketId(bracket), BattlegroundMgr::BGArenaType(BattlegroundQueueTypeId(qtype)), true, 0);
+            }
+        }
+
+        for (uint32 qtype = BATTLEGROUND_QUEUE_AV; qtype < MAX_BATTLEGROUND_QUEUE_TYPES; ++qtype)
+        {
+            for (uint32 bracket = BG_BRACKET_ID_FIRST; bracket < MAX_BATTLEGROUND_BRACKETS; ++bracket)
+            {
+                m_BattlegroundQueues[qtype].BattlegroundQueueAnnouncerUpdate(m_NextPeriodicQueueUpdateTime, BattlegroundQueueTypeId(qtype), BattlegroundBracketId(bracket));
             }
         }
     }
@@ -171,7 +181,7 @@ void BattlegroundMgr::Update(uint32 diff)
             if (GameTime::GetGameTime() > m_NextAutoDistributionTime)
             {
                 sArenaTeamMgr->DistributeArenaPoints();
-                m_NextAutoDistributionTime = m_NextAutoDistributionTime + 1_days * sWorld->getIntConfig(CONFIG_ARENA_AUTO_DISTRIBUTE_INTERVAL_DAYS);
+                m_NextAutoDistributionTime = GameTime::GetGameTime() + Seconds(DAY * sWorld->getIntConfig(CONFIG_ARENA_AUTO_DISTRIBUTE_INTERVAL_DAYS));
                 sWorld->setWorldState(WS_ARENA_DISTRIBUTION_TIME, m_NextAutoDistributionTime.count());
             }
             m_AutoDistributionTimeChecker = 600000; // 10 minutes check
@@ -457,7 +467,7 @@ void BattlegroundMgr::LoadBattlegroundTemplates()
 
         BattlegroundTypeId bgTypeId = static_cast<BattlegroundTypeId>(fields[0].Get<uint32>());
 
-        if (DisableMgr::IsDisabledFor(DISABLE_TYPE_BATTLEGROUND, bgTypeId, nullptr))
+        if (sDisableMgr->IsDisabledFor(DISABLE_TYPE_BATTLEGROUND, bgTypeId, nullptr))
             continue;
 
         // can be overwrite by values from DB
@@ -566,8 +576,8 @@ void BattlegroundMgr::BuildBattlegroundListPacket(WorldPacket* data, ObjectGuid 
     uint32 winner_arena = player->GetRandomWinner() ? sWorld->getIntConfig(CONFIG_BG_REWARD_WINNER_ARENA_LAST) : sWorld->getIntConfig(CONFIG_BG_REWARD_WINNER_ARENA_FIRST);
     uint32 loser_kills = player->GetRandomWinner() ? sWorld->getIntConfig(CONFIG_BG_REWARD_LOSER_HONOR_LAST) : sWorld->getIntConfig(CONFIG_BG_REWARD_LOSER_HONOR_FIRST);
 
-    winner_kills = Acore::Honor::hk_honor_at_level(player->getLevel(), float(winner_kills));
-    loser_kills = Acore::Honor::hk_honor_at_level(player->getLevel(), float(loser_kills));
+    winner_kills = Acore::Honor::hk_honor_at_level(player->GetLevel(), float(winner_kills));
+    loser_kills = Acore::Honor::hk_honor_at_level(player->GetLevel(), float(loser_kills));
 
     data->Initialize(SMSG_BATTLEFIELD_LIST);
     *data << guid;                                          // battlemaster guid
@@ -598,14 +608,14 @@ void BattlegroundMgr::BuildBattlegroundListPacket(WorldPacket* data, ObjectGuid 
         *data << uint32(0);                                 // unk (count?)
     else                                                    // battleground
     {
-        size_t count_pos = data->wpos();
+        std::size_t count_pos = data->wpos();
         *data << uint32(0);                                 // number of bg instances
 
         auto const& it = bgDataStore.find(bgTypeId);
         if (it != bgDataStore.end())
         {
             // expected bracket entry
-            if (PvPDifficultyEntry const* bracketEntry = GetBattlegroundBracketByLevel(it->second._Battlegrounds.begin()->second->GetMapId(), player->getLevel()))
+            if (PvPDifficultyEntry const* bracketEntry = GetBattlegroundBracketByLevel(it->second._Battlegrounds.begin()->second->GetMapId(), player->GetLevel()))
             {
                 uint32 count = 0;
                 BattlegroundBracketId bracketId = bracketEntry->GetBracketId();
@@ -712,12 +722,12 @@ void BattlegroundMgr::ToggleTesting()
     if (sWorld->getBoolConfig(CONFIG_DEBUG_BATTLEGROUND))
     {
         m_Testing = true;
-        sWorld->SendWorldText(LANG_DEBUG_BG_CONF);
+        ChatHandler(nullptr).SendWorldText(LANG_DEBUG_BG_CONF);
     }
     else
     {
         m_Testing = !m_Testing;
-        sWorld->SendWorldText(m_Testing ? LANG_DEBUG_BG_ON : LANG_DEBUG_BG_OFF);
+        ChatHandler(nullptr).SendWorldText(m_Testing ? LANG_DEBUG_BG_ON : LANG_DEBUG_BG_OFF);
     }
 }
 
@@ -726,12 +736,12 @@ void BattlegroundMgr::ToggleArenaTesting()
     if (sWorld->getBoolConfig(CONFIG_DEBUG_ARENA))
     {
         m_ArenaTesting = true;
-        sWorld->SendWorldText(LANG_DEBUG_ARENA_CONF);
+        ChatHandler(nullptr).SendWorldText(LANG_DEBUG_ARENA_CONF);
     }
     else
     {
         m_ArenaTesting = !m_ArenaTesting;
-        sWorld->SendWorldText(m_ArenaTesting ? LANG_DEBUG_ARENA_ON : LANG_DEBUG_ARENA_OFF);
+        ChatHandler(nullptr).SendWorldText(m_ArenaTesting ? LANG_DEBUG_ARENA_ON : LANG_DEBUG_ARENA_OFF);
     }
 }
 

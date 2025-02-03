@@ -39,13 +39,19 @@ enum BWLEncounter
 
     // Additional Data
     DATA_LORD_VICTOR_NEFARIUS   = 8,
+    DATA_GRETHOK                = 9,
+    DATA_NEFARIAN_TROOPS        = 10,
 
     // Doors
-    DATA_GO_CHROMAGGUS_DOOR     = 9
+    DATA_GO_CHROMAGGUS_DOOR     = 11,
+    DATA_GO_CHROMAGGUS_DOOR_EXIT= 12
 };
 
 enum BWLCreatureIds
 {
+    NPC_GRETHOK                 = 12557,
+    NPC_BLACKWING_GUARDSMAN     = 14456,
+    NPC_NEFARIAN_TROOPS         = 14459,
     NPC_RAZORGORE               = 12435,
     NPC_BLACKWING_DRAGON        = 12422,
     NPC_BLACKWING_TASKMASTER    = 12458,
@@ -87,7 +93,8 @@ enum BWLGameObjectIds
     GO_PORTCULLIS_THREEDRAGONS      = 179115,
     GO_CHROMAGGUS_LEVER             = 179148,
     GO_PORTCULLIS_CHROMAGGUS        = 179116,
-    GO_PORTCULLIS_NEFARIAN          = 179117,
+    GO_PORTCULLIS_CHROMAGGUS_EXIT   = 179117,
+    GO_PORTCULLIS_NEFARIAN          = 176966,
     GO_SUPPRESSION_DEVICE           = 179784
 };
 

@@ -20,14 +20,15 @@
 #include "GameEventMgr.h"
 #include "InstanceScript.h"
 #include "ObjectMgr.h"
-#include "Player.h"
 #include "Pet.h"
+#include "Player.h"
 #include "ReputationMgr.h"
 #include "ScriptMgr.h"
 #include "ScriptedCreature.h"
 #include "Spell.h"
 #include "SpellAuras.h"
 #include "SpellMgr.h"
+#include "WorldState.h"
 
 // Checks if object meets the condition
 // Can have CONDITION_SOURCE_TYPE_NONE && !mReferenceId if called from a special event (ie: eventAI)
@@ -268,7 +269,7 @@ bool Condition::Meets(ConditionSourceInfo& sourceInfo)
     case CONDITION_LEVEL:
     {
         if (Unit* unit = object->ToUnit())
-            condMeets = CompareValues(static_cast<ComparisionType>(ConditionValue2), static_cast<uint32>(unit->getLevel()), ConditionValue1);
+            condMeets = CompareValues(static_cast<ComparisionType>(ConditionValue2), static_cast<uint32>(unit->GetLevel()), ConditionValue1);
         break;
     }
     case CONDITION_DRUNKENSTATE:
@@ -289,13 +290,27 @@ bool Condition::Meets(ConditionSourceInfo& sourceInfo)
     }
     case CONDITION_NEAR_GAMEOBJECT:
     {
-        condMeets = static_cast<bool>(GetClosestGameObjectWithEntry(object, ConditionValue1, static_cast<float>(ConditionValue2)));
-        break;
+        if (!ConditionValue3)
+        {
+            condMeets = static_cast<bool>(GetClosestGameObjectWithEntry(object, ConditionValue1, static_cast<float>(ConditionValue2)));
+            break;
+        }
+        else
+        {
+            if (GameObject* go = GetClosestGameObjectWithEntry(object, ConditionValue1, static_cast<float>(ConditionValue2)))
+            {
+                if ((go->GetGoState() == GO_STATE_READY && ConditionValue3 == 1) || (go->GetGoState() != GO_STATE_READY && ConditionValue3 == 2))
+                    condMeets = true;
+                else
+                    condMeets = false;
+            }
+            break;
+        }
     }
     case CONDITION_OBJECT_ENTRY_GUID:
     {
         if (ConditionValue3 == 1 && object->ToUnit()) // pussywizard: if == 1, ignore not attackable/selectable targets
-            if (object->HasFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_NOT_SELECTABLE))
+            if (object->ToUnit()->HasUnitFlag(UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_NOT_SELECTABLE))
                 break;
 
         if (uint32(object->GetTypeId()) == ConditionValue1)
@@ -500,6 +515,26 @@ bool Condition::Meets(ConditionSourceInfo& sourceInfo)
             condMeets = unit->HasAuraType(AuraType(ConditionValue1));
         break;
     }
+    case CONDITION_STAND_STATE:
+    {
+        if (Unit* unit = object->ToUnit())
+        {
+            if (ConditionValue1 == 0)
+            {
+                condMeets = (unit->getStandState() == ConditionValue2);
+            }
+            else if (ConditionValue2 == 0)
+            {
+                condMeets = unit->IsStandState();
+            }
+            else if (ConditionValue2 == 1)
+            {
+                condMeets = unit->IsSitState();
+            }
+        }
+
+        break;
+    }
     case CONDITION_DIFFICULTY_ID:
     {
         condMeets = object->GetMap()->GetDifficulty() == ConditionValue1;
@@ -534,6 +569,11 @@ bool Condition::Meets(ConditionSourceInfo& sourceInfo)
     {
         if (Unit* unit = object->ToUnit())
             condMeets = unit->IsCharmed();
+        break;
+    }
+    case CONDITION_WORLD_SCRIPT:
+    {
+        condMeets = sWorldState->IsConditionFulfilled(static_cast<WorldStateCondition>(ConditionValue1), static_cast<WorldStateConditionState>(ConditionValue2));
         break;
     }
     default:
@@ -721,6 +761,9 @@ uint32 Condition::GetSearcherTypeMaskForCondition()
     case CONDITION_HAS_AURA_TYPE:
         mask |= GRID_MAP_TYPE_MASK_CREATURE | GRID_MAP_TYPE_MASK_PLAYER;
         break;
+    case CONDITION_STAND_STATE:
+        mask |= GRID_MAP_TYPE_MASK_CREATURE | GRID_MAP_TYPE_MASK_PLAYER;
+        break;
     case CONDITION_DIFFICULTY_ID:
         mask |= GRID_MAP_TYPE_MASK_ALL;
         break;
@@ -732,6 +775,9 @@ uint32 Condition::GetSearcherTypeMaskForCondition()
         break;
     case CONDITION_CHARMED:
         mask |= GRID_MAP_TYPE_MASK_CREATURE | GRID_MAP_TYPE_MASK_PLAYER;
+        break;
+    case CONDITION_WORLD_SCRIPT:
+        mask |= GRID_MAP_TYPE_MASK_ALL;
         break;
     default:
         ASSERT(false && "Condition::GetSearcherTypeMaskForCondition - missing condition handling!");
@@ -745,21 +791,24 @@ uint32 Condition::GetMaxAvailableConditionTargets()
     // returns number of targets which are available for given source type
     switch (SourceType)
     {
-    case CONDITION_SOURCE_TYPE_SMART_EVENT:
-        return 3;
-    case CONDITION_SOURCE_TYPE_SPELL:
-    case CONDITION_SOURCE_TYPE_SPELL_IMPLICIT_TARGET:
-    case CONDITION_SOURCE_TYPE_CREATURE_TEMPLATE_VEHICLE:
-    case CONDITION_SOURCE_TYPE_VEHICLE_SPELL:
-    case CONDITION_SOURCE_TYPE_SPELL_CLICK_EVENT:
-    case CONDITION_SOURCE_TYPE_GOSSIP_MENU:
-    case CONDITION_SOURCE_TYPE_GOSSIP_MENU_OPTION:
-    case CONDITION_SOURCE_TYPE_NPC_VENDOR:
-    case CONDITION_SOURCE_TYPE_SPELL_PROC:
-        return 2;
-    default:
-        return 1;
+        case CONDITION_SOURCE_TYPE_SMART_EVENT:
+            return 3;
+        case CONDITION_SOURCE_TYPE_SPELL:
+        case CONDITION_SOURCE_TYPE_SPELL_IMPLICIT_TARGET:
+        case CONDITION_SOURCE_TYPE_CREATURE_TEMPLATE_VEHICLE:
+        case CONDITION_SOURCE_TYPE_VEHICLE_SPELL:
+        case CONDITION_SOURCE_TYPE_SPELL_CLICK_EVENT:
+        case CONDITION_SOURCE_TYPE_GOSSIP_MENU:
+        case CONDITION_SOURCE_TYPE_GOSSIP_MENU_OPTION:
+        case CONDITION_SOURCE_TYPE_NPC_VENDOR:
+        case CONDITION_SOURCE_TYPE_SPELL_PROC:
+        case CONDITION_SOURCE_TYPE_CREATURE_VISIBILITY:
+            return 2;
+        default:
+            break;
     }
+
+    return 1;
 }
 
 ConditionMgr::ConditionMgr() {}
@@ -1014,10 +1063,10 @@ void ConditionMgr::LoadConditions(bool isReload)
         LootTemplates_Spell.ResetConditions();
         LootTemplates_Player.ResetConditions();
 
-        LOG_INFO("server.loading", "Re-Loading `gossip_menu` Table for Conditions!");
+        LOG_INFO("server.loading", "Reloading `gossip_menu` Table for Conditions!");
         sObjectMgr->LoadGossipMenu();
 
-        LOG_INFO("server.loading", "Re-Loading `gossip_menu_option` Table for Conditions!");
+        LOG_INFO("server.loading", "Reloading `gossip_menu_option` Table for Conditions!");
         sObjectMgr->LoadGossipMenuItems();
         sSpellMgr->UnloadSpellInfoImplicitTargetConditionLists();
     }
@@ -1799,9 +1848,6 @@ bool ConditionMgr::isConditionTypeValid(Condition* cond)
     case CONDITION_TERRAIN_SWAP:
         LOG_ERROR("sql.sql", "SourceEntry {} in `condition` table has a ConditionType that is not supported on 3.3.5a ({}), ignoring.", cond->SourceEntry, uint32(cond->ConditionType));
         return false;
-    case CONDITION_STAND_STATE:
-        LOG_ERROR("sql.sql", "SourceEntry {} in `condition` table has a ConditionType that is not yet supported on AzerothCore ({}), ignoring.", cond->SourceEntry, uint32(cond->ConditionType));
-        return false;
     default:
         break;
     }
@@ -2101,8 +2147,8 @@ bool ConditionMgr::isConditionTypeValid(Condition* cond)
             LOG_ERROR("sql.sql", "NearGameObject condition has non existing gameobject template entry ({}), skipped", cond->ConditionValue1);
             return false;
         }
-        if (cond->ConditionValue3)
-            LOG_ERROR("sql.sql", "NearGameObject condition has useless data in value3 ({})!", cond->ConditionValue3);
+        if (cond->ConditionValue3 > 2)
+            LOG_ERROR("sql.sql", "NearGameObject condition for gameobject ID ({}) has data over 2 for value3 ({})!", cond->ConditionValue1, cond->ConditionValue3);
         break;
     }
     case CONDITION_OBJECT_ENTRY_GUID:
@@ -2140,7 +2186,7 @@ bool ConditionMgr::isConditionTypeValid(Condition* cond)
             }
             if (cond->ConditionValue3)
             {
-                if (GameObjectData const* goData = sObjectMgr->GetGOData(cond->ConditionValue3))
+                if (GameObjectData const* goData = sObjectMgr->GetGameObjectData(cond->ConditionValue3))
                 {
                     if (cond->ConditionValue2 && goData->id != cond->ConditionValue2)
                     {
@@ -2282,11 +2328,6 @@ bool ConditionMgr::isConditionTypeValid(Condition* cond)
         break;
     case CONDITION_WORLD_STATE:
     {
-        if (!sWorld->getWorldState(cond->ConditionValue1))
-        {
-            LOG_ERROR("sql.sql", "World state condition has non existing world state in value1 ({}), skipped", cond->ConditionValue1);
-            return false;
-        }
         if (cond->ConditionValue3)
             LOG_ERROR("sql.sql", "World state condition has useless data in value3 ({})!", cond->ConditionValue3);
         break;
@@ -2379,6 +2420,28 @@ bool ConditionMgr::isConditionTypeValid(Condition* cond)
         if (cond->ConditionValue1 == SPELL_AURA_NONE || cond->ConditionValue1 >= TOTAL_AURAS)
         {
             LOG_ERROR("sql.sql", "Has Aura Effect condition has non existing aura ({}), skipped", cond->ConditionValue1);
+            return false;
+        }
+        break;
+    }
+    case CONDITION_STAND_STATE:
+    {
+        bool valid = false;
+        switch (cond->ConditionValue1)
+        {
+            case 0:
+                valid = cond->ConditionValue2 <= UNIT_STAND_STATE_SUBMERGED;
+                break;
+            case 1:
+                valid = cond->ConditionValue2 <= 1;
+                break;
+            default:
+                valid = false;
+                break;
+        }
+        if (!valid)
+        {
+            LOG_ERROR("sql.sql", "CONDITION_STAND_STATE has non-existing stand state ({},{}), skipped.", cond->ConditionValue1, cond->ConditionValue2);
             return false;
         }
         break;
